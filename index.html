@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Killer Whale (Orca) Sightings – Past 30 Days</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: Arial, sans-serif; display: flex; flex-direction: column; height: 100vh; }
+    header {
+      background: #1a3a5c;
+      color: #fff;
+      padding: 12px 20px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-shrink: 0;
+    }
+    header h1 { font-size: 1.25rem; }
+    header .subtitle { font-size: 0.85rem; opacity: 0.8; }
+    #status {
+      padding: 6px 20px;
+      font-size: 0.85rem;
+      background: #eaf4ff;
+      border-bottom: 1px solid #c6dff5;
+      color: #1a3a5c;
+      flex-shrink: 0;
+    }
+    #map { flex: 1; }
+    .leaflet-popup-content b { display: block; margin-bottom: 4px; }
+    .leaflet-popup-content a { color: #1a6db5; }
+  </style>
+</head>
+<body>
+  <header>
+    <span style="font-size:2rem;">🐋</span>
+    <div>
+      <h1>Killer Whale (Orca) Sightings</h1>
+      <div class="subtitle">Past 30 days · Data from <a href="https://www.inaturalist.org" target="_blank" rel="noopener" style="color:#9ecfff;">iNaturalist</a></div>
+    </div>
+  </header>
+  <div id="status">Loading sightings…</div>
+  <div id="map"></div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    // Initialize map centered on the world
+    const map = L.map('map', { worldCopyJump: true }).setView([20, 0], 2);
+
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+      maxZoom: 18,
+    }).addTo(map);
+
+    const statusEl = document.getElementById('status');
+
+    // Custom orca icon
+    const orcaIcon = L.divIcon({
+      html: '🐋',
+      className: '',
+      iconSize: [28, 28],
+      iconAnchor: [14, 14],
+      popupAnchor: [0, -14],
+    });
+
+    /**
+     * Fetch all pages of Orca observations from iNaturalist for the past 30 days.
+     * iNaturalist taxon_id for Orcinus orca (Killer Whale) is 41659.
+     */
+    async function fetchOrcaSightings() {
+      const taxonId = 41659; // Orcinus orca
+      const perPage = 200;
+      const d1 = new Date();
+      d1.setDate(d1.getDate() - 30);
+      const d1Str = d1.toISOString().slice(0, 10);
+
+      const baseUrl = 'https://api.inaturalist.org/v1/observations';
+      const params = new URLSearchParams({
+        taxon_id: taxonId,
+        d1: d1Str,
+        per_page: perPage,
+        order: 'desc',
+        order_by: 'created_at',
+        geo: 'true',          // only observations with coordinates
+        verifiable: 'true',   // research-grade or needs-ID
+      });
+
+      let page = 1;
+      let totalResults = 0;
+      const allObservations = [];
+
+      do {
+        params.set('page', page);
+        const response = await fetch(`${baseUrl}?${params.toString()}`);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const data = await response.json();
+        totalResults = data.total_results;
+        allObservations.push(...data.results);
+        statusEl.textContent = `Loading… ${allObservations.length} of ${totalResults} sightings fetched`;
+        page++;
+      // Cap at 10,000 to avoid overwhelming the browser with markers
+      } while (allObservations.length < totalResults && allObservations.length < 10000);
+
+      return allObservations;
+    }
+
+    function formatDate(isoString) {
+      if (!isoString) return 'Unknown date';
+      const d = new Date(isoString);
+      return isNaN(d) ? isoString : d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+    }
+
+    function parseLocation(location) {
+      if (!location) return null;
+      const parts = location.split(',');
+      if (parts.length < 2) return null;
+      const lat = parseFloat(parts[0]);
+      const lng = parseFloat(parts[1]);
+      return isNaN(lat) || isNaN(lng) ? null : { lat, lng };
+    }
+
+    function addMarkers(observations) {
+      const bounds = [];
+      observations.forEach(obs => {
+        const coords = parseLocation(obs.location);
+        if (!coords) return;
+        const { lat, lng } = coords;
+
+        const name = (obs.taxon && obs.taxon.preferred_common_name) || 'Killer Whale / Orca';
+        const date = formatDate(obs.observed_on || obs.created_at);
+        const place = obs.place_guess || 'Location not specified';
+        const user = obs.user ? obs.user.login : 'Unknown';
+        const quality = obs.quality_grade ? obs.quality_grade.replace('_', ' ') : '';
+        const url = `https://www.inaturalist.org/observations/${obs.id}`;
+
+        const photoHtml = obs.photos && obs.photos.length > 0
+          ? `<br><img src="${obs.photos[0].url.replace('square', 'small')}" style="max-width:180px;margin-top:6px;border-radius:4px;" />`
+          : '';
+
+        const popup = `
+          <b>${name}</b>
+          <span style="font-size:0.8em;color:#555;">📅 ${date}</span><br>
+          <span style="font-size:0.8em;color:#555;">📍 ${place}</span><br>
+          <span style="font-size:0.8em;color:#555;">👤 ${user}${quality ? ' · ' + quality : ''}</span>
+          ${photoHtml}<br>
+          <a href="${url}" target="_blank" rel="noopener" style="font-size:0.8em;">View on iNaturalist ↗</a>
+        `;
+
+        L.marker([lat, lng], { icon: orcaIcon })
+          .addTo(map)
+          .bindPopup(popup);
+
+        bounds.push([lat, lng]);
+      });
+
+      return bounds;
+    }
+
+    (async () => {
+      try {
+        const observations = await fetchOrcaSightings();
+        const bounds = addMarkers(observations);
+
+        if (observations.length === 0) {
+          statusEl.textContent = 'No Orca sightings found in the past 30 days with location data.';
+        } else {
+          statusEl.textContent = `Showing ${observations.length} Orca sighting${observations.length !== 1 ? 's' : ''} in the past 30 days. Click a 🐋 for details.`;
+          if (bounds.length > 0) {
+            map.fitBounds(bounds, { padding: [40, 40], maxZoom: 6 });
+          }
+        }
+      } catch (err) {
+        console.error(err);
+        statusEl.style.background = '#fff0f0';
+        statusEl.style.color = '#a00';
+        statusEl.textContent = `Error loading sightings: ${err.message}. Please check your connection and try again.`;
+      }
+    })();
+  </script>
+</body>
+</html>
