@@ -71,19 +71,21 @@
     async function fetchOrcaSightings() {
       const taxonId = 41659; // Orcinus orca
       const perPage = 200;
-      const d1 = new Date();
+      const now = new Date();
+      const d1 = new Date(now);
       d1.setDate(d1.getDate() - 30);
       const d1Str = d1.toISOString().slice(0, 10);
+      const d2Str = now.toISOString().slice(0, 10);
 
       const baseUrl = 'https://api.inaturalist.org/v1/observations';
       const params = new URLSearchParams({
         taxon_id: taxonId,
         d1: d1Str,
+        d2: d2Str,
         per_page: perPage,
         order: 'desc',
-        order_by: 'created_at',
+        order_by: 'observed_on',
         geo: 'true',          // only observations with coordinates
-        verifiable: 'true',   // research-grade or needs-ID
       });
 
       let page = 1;
@@ -111,19 +113,29 @@
       return isNaN(d) ? isoString : d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
     }
 
-    function parseLocation(location) {
-      if (!location) return null;
-      const parts = location.split(',');
-      if (parts.length < 2) return null;
-      const lat = parseFloat(parts[0]);
-      const lng = parseFloat(parts[1]);
-      return isNaN(lat) || isNaN(lng) ? null : { lat, lng };
+    function parseLocation(obs) {
+      // Prefer the "location" string field ("lat,lng")
+      if (obs.location) {
+        const parts = obs.location.split(',');
+        if (parts.length >= 2) {
+          const lat = parseFloat(parts[0]);
+          const lng = parseFloat(parts[1]);
+          if (!isNaN(lat) && !isNaN(lng)) return { lat, lng };
+        }
+      }
+      // Fall back to GeoJSON coordinates (note: GeoJSON order is [lng, lat])
+      if (obs.geojson && obs.geojson.coordinates && obs.geojson.coordinates.length >= 2) {
+        const lng = parseFloat(obs.geojson.coordinates[0]);
+        const lat = parseFloat(obs.geojson.coordinates[1]);
+        if (!isNaN(lat) && !isNaN(lng)) return { lat, lng };
+      }
+      return null;
     }
 
     function addMarkers(observations) {
       const bounds = [];
       observations.forEach(obs => {
-        const coords = parseLocation(obs.location);
+        const coords = parseLocation(obs);
         if (!coords) return;
         const { lat, lng } = coords;
 
